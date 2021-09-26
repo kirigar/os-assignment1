@@ -132,21 +132,62 @@ Expression parseCommandLine(string commandLine) {
 	return expression;
 }
 
+bool CommandExists(Command command){
+	return !executeCommand(command);
+}
+
+int execSingleExtCmd(Expression& expression){
+	pid_t child = fork();
+	if (child < 0){
+		cerr << "Fork Failed" << endl;
+		exit(1);
+	}
+	if (child == 0) {		
+		// do not execute non-existing commands
+		if (CommandExists(expression.commands[0])){
+			executeCommand(expression.commands[0]);
+		}
+		else {
+			cout << "Command not found:" + expression.commands[0].parts[0] << endl;
+			abort();
+		}
+	}
+	waitpid(child, nullptr, 0);
+	return 0;
+}
+
+
 int executeExpression(Expression& expression) {
-	// Check for empty expression
+	// Check for empty expressionget
 	if (expression.commands.size() == 0)
 		return EINVAL;
-
+	 
+	if (expression.commands[0].parts[0] == "exit"){
+		cout << "Exiting the shell" << endl;
+		exit(1);
+		return 1;
+	}
+	if (expression.commands[0].parts[0] == "cd"){
+		chdir(expression.commands[0].parts[1].c_str());
+		return 0;
+	}
+	// Handle multiple external commands with or without arguments
+	if (expression.commands.size() > 1){
+		//return execMultiExtCmd(expression);
+	}
 	// Handle intern commands (like 'cd' and 'exit')
 	
 	// External commands, executed with fork():
+	
 	// Loop over all commandos, and connect the output and input of the forked processes
 
 	// For now, we just execute the first command in the expression. Disable.
 	executeCommand(expression.commands[0]);
 
-	return 0;
+	return execSingleExtCmd(expression);
 }
+
+
 
 int normal(bool showPrompt) {
 	while (cin.good()) {
