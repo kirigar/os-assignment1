@@ -132,30 +132,66 @@ Expression parseCommandLine(string commandLine) {
 	return expression;
 }
 
-bool CommandExists(Command command){
-	return !executeCommand(command);
-}
-
-int execSingleExtCmd(Expression& expression){
+int forkExecuteCommand(const Command& cmd){
 	pid_t child = fork();
 	if (child < 0){
 		cerr << "Fork Failed" << endl;
 		exit(1);
 	}
-	if (child == 0) {		
-		// do not execute non-existing commands
-		if (CommandExists(expression.commands[0])){
-			executeCommand(expression.commands[0]);
-		}
-		else {
-			cout << "Command not found:" + expression.commands[0].parts[0] << endl;
-			abort();
-		}
+	if (child == 0) {
+		int retval = executeCommand(cmd);
+
+		cout << "Invalid command" << endl;
+		abort();
 	}
 	waitpid(child, nullptr, 0);
 	return 0;
 }
 
+void pipeCommands(Expression& expression) {
+	int channels[expression.commands.size() - 1][2];
+	// Create all pipes
+	for (int i = 0; i < expression.commands.size() - 1; i++) {
+		if (pipe(channels[i]) != 0) {
+			cerr << "Failed to create pipe\n";
+		}
+	}
+
+	pid_t children[expression.commands.size()];
+
+	// Connect all commands with pipes
+	for (int i = 0; i < expression.commands.size(); i++) {
+		children[i] = fork();
+		if (children[i] == 0) {
+			if (i == 0) {
+				dup2(channels[i][1], STDOUT_FILENO);
+			} else if (i == expression.commands.size() - 1) {
+				dup2(channels[i-1][0], STDIN_FILENO);
+			} else {
+				dup2(channels[i][1], STDOUT_FILENO);
+				dup2(channels[i-1][0], STDIN_FILENO);
+			}
+
+			for (int i = 0; i < expression.commands.size() - 1; i++) {
+				close(channels[i][0]);
+				close(channels[i][1]);
+			}
+
+			executeCommand(expression.commands[i]);
+			cout << "Invalid command" << endl;
+			abort();
+		}
+	}
+
+	for (int i = 0; i < expression.commands.size() - 1; i++) {
+		close(channels[i][0]);
+		close(channels[i][1]);
+	}
+
+	for (int i = 0; i < expression.commands.size(); i++) {
+		waitpid(children[i], nullptr, 0);
+	}
+}
 
 int executeExpression(Expression& expression) {
 	// Check for empty expressionget
@@ -167,27 +203,21 @@ int executeExpression(Expression& expression) {
 		exit(1);
 		return 1;
 	}
+
 	if (expression.commands[0].parts[0] == "cd"){
 		chdir(expression.commands[0].parts[1].c_str());
 		return 0;
 	}
-	// Handle multiple external commands with or without arguments
-	if (expression.commands.size() > 1){
-		//return execMultiExtCmd(expression);
+
+	int retval = 0;
+	if (expression.commands.size() == 1) {
+		retval = forkExecuteCommand(expression.commands[0]);
+	} else {
+		pipeCommands(expression);
 	}
-	// Handle intern commands (like 'cd' and 'exit')
-	
-	// External commands, executed with fork():
-	
-	// Loop over all commandos, and connect the output and input of the forked processes
 
-	// For now, we just execute the first command in the expression. Disable.
-	executeCommand(expression.commands[0]);
-
-	return execSingleExtCmd(expression);
+	return retval;
 }
-
-
 
 int normal(bool showPrompt) {
 	while (cin.good()) {
@@ -200,42 +230,6 @@ int normal(bool showPrompt) {
 	return 0;
 }
 
-// framework for executing "date | tail -c 5" using raw commands
-// two processes are created, and connected to each other
-int step1(bool showPrompt) {
-	// create communication channel shared between the two processes
-	// ...
-
-	pid_t child1 = fork();
-	if (child1 == 0) {
-		// redirect standard output (STDOUT_FILENO) to the input of the shared communication channel
-		// free non used resources (why?)
-		Command cmd = {{string("date")}};
-		executeCommand(cmd);
-		// display nice warning that the executable could not be found
-		abort(); // if the executable is not found, we should abort. (why?)
-	}
-
-	pid_t child2 = fork();
-	if (child2 == 0) {
-		// redirect the output of the shared communication channel to the standard input (STDIN_FILENO).
-		// free non used resources (why?)
-		Command cmd = {{string("tail"), string("-c"), string("5")}};
-		executeCommand(cmd);
-		abort(); // if the executable is not found, we should abort. (why?)
-	}
-
-	// free non used resources (why?)
-	// wait on child processes to finish (why both?)
-	waitpid(child1, nullptr, 0);
-	waitpid(child2, nullptr, 0);
-	return 0;
-}
-
 int shell(bool showPrompt) {
-	//*
 	return normal(showPrompt);
-	/*/
-	return step1(showPrompt);
-	//*/
 }
