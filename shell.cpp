@@ -164,7 +164,16 @@ void pipeCommands(Expression& expression) {
 		children[i] = fork();
 		if (children[i] == 0) {
 			if (i == 0) {
-				dup2(channels[i][1], STDOUT_FILENO);
+				if(expression.inputFromFile.size() != 0){
+					int input = open(expression.inputFromFile.c_str(), O_RDONLY)
+					if(input < 0){
+						cerr << "input file can't be found";
+						abort()
+					}
+					dup2(input, STDIN_FILENO)
+					close(input)
+				}
+				//dup2(channels[i][1], STDOUT_FILENO);
 			} else if (i == expression.commands.size() - 1) {
 				dup2(channels[i-1][0], STDIN_FILENO);
 			} else {
