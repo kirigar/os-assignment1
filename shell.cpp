@@ -19,6 +19,7 @@
 #include <sys/param.h>
 #include <signal.h>
 #include <string.h>
+#include <fcntl.h>
 
 #include <vector>
 
@@ -31,8 +32,8 @@ struct Command {
 
 struct Expression {
 	vector<Command> commands;
-	string inputFromFile;
-	string outputToFile;
+	string inputFromFile = "";
+	string outputToFile = "";
 	bool background = false;
 };
 
@@ -132,23 +133,36 @@ Expression parseCommandLine(string commandLine) {
 	return expression;
 }
 
-int forkExecuteCommand(const Command& cmd){
+int forkExecuteCommand(Expression& expression) {
+	int retval = 0;
 	pid_t child = fork();
 	if (child < 0){
 		cerr << "Fork Failed" << endl;
 		exit(1);
 	}
 	if (child == 0) {
-		int retval = executeCommand(cmd);
+		if (expression.inputFromFile != "") {
+			int fdesc = open(expression.inputFromFile.c_str(), O_RDONLY);
+			dup2(fdesc, STDIN_FILENO);
+			close(fdesc);
+		}
 
+		if (expression.outputToFile != "") {
+			int fdesc = open(expression.outputToFile.c_str(), O_WRONLY | O_CREAT, 0644);
+			dup2(fdesc, STDOUT_FILENO);
+			close(fdesc);
+		}
+		int retval = executeCommand(expression.commands[0]);
 		cout << "Invalid command" << endl;
 		abort();
 	}
-	waitpid(child, nullptr, 0);
-	return 0;
+	if (!expression.background) waitpid(child, &retval, 0);
+	return retval;
 }
 
-void pipeCommands(Expression& expression) {
+int forkExecuteCommands(Expression& expression) {
+	int retval = 0;
+
 	int channels[expression.commands.size() - 1][2];
 	// Create all pipes
 	for (int i = 0; i < expression.commands.size() - 1; i++) {
@@ -165,8 +179,18 @@ void pipeCommands(Expression& expression) {
 		if (children[i] == 0) {
 			if (i == 0) {
 				dup2(channels[i][1], STDOUT_FILENO);
+				if (expression.inputFromFile != "") {
+					int fdesc = open(expression.inputFromFile.c_str(), O_RDONLY);
+					dup2(fdesc, STDIN_FILENO);
+					close(fdesc);
+				}
 			} else if (i == expression.commands.size() - 1) {
 				dup2(channels[i-1][0], STDIN_FILENO);
+				if (expression.outputToFile != "") {
+					int fdesc = open(expression.outputToFile.c_str(), O_WRONLY | O_CREAT, 0644);
+					dup2(fdesc, STDOUT_FILENO);
+					close(fdesc);
+				}
 			} else {
 				dup2(channels[i][1], STDOUT_FILENO);
 				dup2(channels[i-1][0], STDIN_FILENO);
@@ -188,9 +212,15 @@ void pipeCommands(Expression& expression) {
 		close(channels[i][1]);
 	}
 
-	for (int i = 0; i < expression.commands.size(); i++) {
-		waitpid(children[i], nullptr, 0);
+	if (!expression.background) {
+		for (int i = 0; i < expression.commands.size(); i++) {
+			if (i == expression.commands.size() - 1)
+				waitpid(children[i], &retval, 0);
+			else
+				waitpid(children[i], nullptr, 0);
+		}
 	}
+	return retval;
 }
 
 int executeExpression(Expression& expression) {
@@ -211,9 +241,9 @@ int executeExpression(Expression& expression) {
 
 	int retval = 0;
 	if (expression.commands.size() == 1) {
-		retval = forkExecuteCommand(expression.commands[0]);
+		retval = forkExecuteCommand(expression);
 	} else {
-		pipeCommands(expression);
+		retval = forkExecuteCommands(expression);
 	}
 
 	return retval;
